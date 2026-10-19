@@ -48,7 +48,7 @@ flutter build web --release --pwa-strategy=none
 flutter build apk --debug
 ```
 
-Windows needs Developer Mode for Flutter desktop plugin symlinks. If dependency resolution completed but symlink creation failed, Android/web builds and tests can use `--no-pub` with the resolved packages. Set `android/local.properties` to your SDK paths; it is ignored by Git.
+Windows needs Developer Mode for Flutter desktop plugin symlinks. A failed `pub get` can leave stale plugin registrations even when packages downloaded successfully: complete dependency setup before building. On this workstation, setup completed with the unused Windows/Linux scaffolds temporarily relocated within the ignored `.local/` directory and then restored. Verify that generated Android/web registrants include Geolocator, shared preferences and Wakelock before using `--no-pub`. Flutter 3.29 may also need its generated `web_entrypoint.stamp` removed after adding a web plugin so the registrant is regenerated. Set `android/local.properties` to your SDK paths; it is ignored by Git.
 
 The debug APK is for device testing. The inherited Android release configuration signs with a debug key; configure a private release keystore before store distribution.
 
