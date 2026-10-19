@@ -74,6 +74,8 @@ class SessionController extends ChangeNotifier {
   DateTime? _lastReceived;
   bool ready = false, busy = false, tracking = false, _disposed = false;
   int _generation = 0;
+  int _segment = 0, _unsavedPoints = 0;
+  static const routePointLimit = 12000;
   String status = 'Start a session to count your pradakshinas.';
   String? storageError;
   double? accuracy;
@@ -83,6 +85,11 @@ class SessionController extends ChangeNotifier {
       .fold(0, (sum, e) => sum + (e['delta'] as int));
   int get currentCount => active == null ? 0 : count(active!);
   int get total => sessions.fold(0, (sum, s) => sum + count(s));
+  int readings(Map<String, dynamic> session) =>
+      (session['readingEvents'] as List? ?? [])
+          .fold(0, (sum, e) => sum + (e['delta'] as int));
+  int get currentReadings => active == null ? 0 : readings(active!);
+  int get totalReadings => sessions.fold(0, (sum, s) => sum + readings(s));
   bool get canBackground =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
@@ -115,6 +122,28 @@ class SessionController extends ChangeNotifier {
               throw const FormatException('Invalid event');
             }
             DateTime.parse(e['at'] as String);
+          }
+          s.putIfAbsent('readingEvents', () => <dynamic>[]);
+          s.putIfAbsent('route', () => <dynamic>[]);
+          for (final e in s['readingEvents'] as List) {
+            if (e['delta'] is! int ||
+                (e['delta'] != 1 && e['delta'] != -1) ||
+                (e['source'] != 'scroll' && e['source'] != 'manual')) {
+              throw const FormatException('Invalid reading event');
+            }
+            DateTime.parse(e['at'] as String);
+          }
+          for (final p in s['route'] as List) {
+            if (p['lat'] is! num ||
+                p['lng'] is! num ||
+                !(p['lat'] as num).isFinite ||
+                !(p['lng'] as num).isFinite ||
+                (p['lat'] as num).abs() > 90 ||
+                (p['lng'] as num).abs() > 180 ||
+                p['segment'] is! int) {
+              throw const FormatException('Invalid route');
+            }
+            DateTime.parse(p['at'] as String);
           }
         }
         sessions = loaded;
@@ -154,12 +183,14 @@ class SessionController extends ChangeNotifier {
   Future<void> begin(String name, String prayer, double minimum) async {
     if (!ready || active != null) return;
     active = {
-      'startedAt': DateTime.now().toIso8601String(),
+      'startedAt': now().toIso8601String(),
       'endedAt': null,
       'name': name.trim().isEmpty ? 'Pradakshina session' : name.trim(),
       'prayer': prayer,
       'minimumDistance': minimum,
-      'events': <Map<String, dynamic>>[]
+      'events': <Map<String, dynamic>>[],
+      'readingEvents': <Map<String, dynamic>>[],
+      'route': <Map<String, dynamic>>[],
     };
     sessions.insert(0, active!);
     status = 'Session ready. Start GPS or use the manual counter.';
@@ -179,6 +210,8 @@ class SessionController extends ChangeNotifier {
       tracker = LapTracker(
           minimumDistance: (active!['minimumDistance'] as num).toDouble());
       accuracy = null;
+      final route = active!['route'] as List;
+      _segment = route.isEmpty ? 0 : (route.last['segment'] as int) + 1;
       tracking = true;
       _lastReceived = DateTime.now();
       status = tracker.status;
@@ -188,11 +221,15 @@ class SessionController extends ChangeNotifier {
         accuracy = fix.accuracy;
         final lap = tracker.add(fix, now: now());
         status = tracker.status;
+        if (tracker.acceptedFix) _recordPoint(fix);
         if (lap != null) {
           (active!['events'] as List).add({
             'at': lap.finishedAt.toIso8601String(),
             'delta': 1,
             'source': 'gps',
+            'startedAt': lap.finishedAt
+                .subtract(Duration(seconds: lap.seconds))
+                .toIso8601String(),
             'distance': lap.distance,
             'seconds': lap.seconds
           });
@@ -237,6 +274,54 @@ class SessionController extends ChangeNotifier {
     await save();
   }
 
+  void _recordPoint(GpsFix fix) {
+    final totalPoints =
+        sessions.fold<int>(0, (sum, s) => sum + (s['route'] as List).length);
+    if (totalPoints >= routePointLimit) {
+      if (active!['routeFull'] != true) {
+        active!['routeFull'] = true;
+        unawaited(save());
+      }
+      return;
+    }
+    if (tracker.startsSegment) _segment++;
+    (active!['route'] as List).add({
+      'lat': double.parse(fix.latitude.toStringAsFixed(6)),
+      'lng': double.parse(fix.longitude.toStringAsFixed(6)),
+      'at': fix.time.toIso8601String(),
+      'segment': _segment,
+    });
+    if (++_unsavedPoints >= 5) {
+      _unsavedPoints = 0;
+      unawaited(save());
+    }
+  }
+
+  Future<void> adjustReading(int delta,
+      {String source = 'manual', String? language}) async {
+    if (active == null ||
+        (delta != 1 && delta != -1) ||
+        (delta < 0 && currentReadings == 0)) {
+      return;
+    }
+    (active!['readingEvents'] as List).add({
+      'at': now().toIso8601String(),
+      'delta': delta,
+      'source': source,
+      if (language != null) 'language': language,
+    });
+    _notify();
+    await save();
+  }
+
+  Future<void> clearRoute(Map<String, dynamic> session) async {
+    session['route'] = <dynamic>[];
+    session.remove('routeFull');
+    _segment++;
+    _notify();
+    await save();
+  }
+
   Future<void> pause({String? message}) async {
     ++_generation;
     tracking = false;
@@ -249,16 +334,18 @@ class SessionController extends ChangeNotifier {
         'Paused. Completed counts are saved; resume starts a fresh loop.';
     _notify();
     await subscription?.cancel();
+    if (active != null) await save();
   }
 
   Future<void> adjust(int delta) async {
-    if (active == null || (delta < 0 && currentCount == 0)) return;
+    if (active == null ||
+        (delta != 1 && delta != -1) ||
+        (delta < 0 && currentCount == 0)) {
+      return;
+    }
     tracker.reset();
-    (active!['events'] as List).add({
-      'at': DateTime.now().toIso8601String(),
-      'delta': delta,
-      'source': 'manual'
-    });
+    (active!['events'] as List).add(
+        {'at': now().toIso8601String(), 'delta': delta, 'source': 'manual'});
     status = tracking
         ? 'Count adjusted. GPS will set a new start point.'
         : 'Manual count saved.';
@@ -269,7 +356,7 @@ class SessionController extends ChangeNotifier {
   Future<void> finish() async {
     await pause();
     if (active == null) return;
-    active!['endedAt'] = DateTime.now().toIso8601String();
+    active!['endedAt'] = now().toIso8601String();
     active = null;
     status = 'Session finished and saved on this device.';
     _notify();

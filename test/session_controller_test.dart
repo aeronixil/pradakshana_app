@@ -44,8 +44,7 @@ void main() {
     expect(restored.total, 1);
     restored.dispose();
   });
-  test('GPS lap is automatically saved and route coordinates are not stored',
-      () async {
+  test('GPS lap and timestamped local path survive restart', () async {
     final source = FakeLocation();
     var time = fixtures.epoch;
     final c = SessionController(location: source, now: () => time);
@@ -60,9 +59,15 @@ void main() {
     expect(c.currentCount, 1);
     final raw = (await SharedPreferences.getInstance())
         .getString(SessionController.storageKey)!;
-    expect(raw, isNot(contains('latitude')));
-    expect(raw, isNot(contains('longitude')));
+    final route = jsonDecode(raw)[0]['route'] as List;
+    expect(route.length, greaterThan(60));
+    expect(route.first['lat'], closeTo(12, .01));
+    expect(route.first['at'], fixtures.epoch.toIso8601String());
     expect(jsonDecode(raw)[0]['events'][0]['source'], 'gps');
+    final restored = SessionController();
+    await restored.load();
+    expect(restored.active!['route'], c.active!['route']);
+    restored.dispose();
     await c.finish();
     expect(source.fixes.hasListener, false);
     c.dispose();
@@ -129,5 +134,79 @@ void main() {
             .getString(SessionController.storageKey),
         'broken');
     c.dispose();
+  });
+  test('reading events are independent, corrected and restored', () async {
+    final c = SessionController();
+    await c.load();
+    await c.begin('Temple', 'Prayer', 80);
+    await c.adjustReading(-1);
+    await c.adjustReading(1, source: 'scroll', language: 'English meaning');
+    await c.adjustReading(1);
+    await c.adjustReading(-1);
+    expect(c.currentCount, 0);
+    expect(c.currentReadings, 1);
+    c.dispose();
+    final restored = SessionController();
+    await restored.load();
+    expect(restored.currentReadings, 1);
+    expect((restored.active!['readingEvents'] as List).first['language'],
+        'English meaning');
+    restored.dispose();
+  });
+  test('old sessions migrate without invented readings or paths', () async {
+    SharedPreferences.setMockInitialValues({
+      SessionController.storageKey: jsonEncode([
+        {
+          'startedAt': fixtures.epoch.toIso8601String(),
+          'endedAt': null,
+          'name': 'Old',
+          'prayer': 'Saved',
+          'minimumDistance': 80,
+          'events': [
+            {
+              'delta': 1,
+              'at': fixtures.epoch.toIso8601String(),
+              'source': 'manual'
+            }
+          ],
+        }
+      ])
+    });
+    final c = SessionController();
+    await c.load();
+    expect(c.ready, true);
+    expect(c.currentCount, 1);
+    expect(c.currentReadings, 0);
+    expect(c.active!['route'], isEmpty);
+    c.dispose();
+  });
+  test('bad fixes excluded, gaps and pauses create disconnected segments',
+      () async {
+    final source = FakeLocation();
+    var time = fixtures.epoch;
+    final c = SessionController(location: source, now: () => time);
+    await c.load();
+    await c.begin('Temple', '', 80);
+    await c.startGps();
+    void feed(GpsFix fix) {
+      time = fix.time;
+      source.fixes.add(fix);
+    }
+
+    feed(fixtures.point(0, 0, 0));
+    feed(fixtures.point(0, 4, 3));
+    feed(fixtures.point(0, 8, 6, accuracy: 50));
+    feed(fixtures.point(0, 12, 30));
+    await c.pause();
+    await c.startGps();
+    feed(fixtures.point(0, 16, 35));
+    final route = c.active!['route'] as List;
+    expect(route.length, 4);
+    expect(route[0]['segment'], route[1]['segment']);
+    expect(route[2]['segment'], isNot(route[1]['segment']));
+    expect(route[3]['segment'], isNot(route[2]['segment']));
+    await c.pause();
+    c.dispose();
+    await source.fixes.close();
   });
 }

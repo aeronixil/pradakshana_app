@@ -12,11 +12,15 @@ The existing local checkout matches GitHub's original `main` commit `1c6137b`.
 2. Tap **Read & start GPS** and allow precise location. Wait for the start-point confirmation before walking. **Read without GPS** opens the same reader without requesting location.
 3. Complete a loop and return within 10 m of the start. The count, timestamp, measured distance and duration are saved automatically.
 4. The count and GPS status remain above the full-height scrolling reading box. Use the text-size buttons, or **Edit** / **Done** to change the text; edits save in the session and GPS updates preserve the reading position. The app requests a screen wake lock while reading, where supported.
-5. Pause when taking a break; resume establishes a new start point. The top-right **Session controls** button opens manual corrections and **Finish session**. Manual +1 / −1 adjustments are recorded separately and reset any partial GPS loop to prevent counting it twice.
+5. Both **pradakshinas** and **readings** have visible + / − controls. Manual pradakshina corrections reset any partial GPS loop to prevent counting it twice; reading corrections do not interrupt GPS.
+6. Select **English meaning** in the reader for a complete plain-English translation, or **हिंदी** for the original. Custom prayers are preserved under **Your text**. English is a meaning translation, not a pronunciation guide.
+7. Scroll from top to bottom to automatically count one reading. Scroll back to the top, or tap **Read again**, for another. Bottom bouncing, programmatic jumps, editing and language/font changes do not add a reading. The detector requires continuous progress and rejects jumps skipping more than 20% of the text. Short text that fits without scrolling needs a manual reading count. This estimates scrolling completion, not attention or actual recitation.
+8. Tap **Insights** for **Summary**, **Paths** and **Timeline**. Summary shows session counts, elapsed time, recorded distance, average GPS loop duration, a seven-day graph and individual loop duration bars. Paths lets you select the whole session or one detected GPS loop and scrub through timestamped positions. Timeline separates GPS, scrolling and manual events. Finishing a session opens Insights automatically; saved sessions remain selectable.
+9. Pause when taking a break; resume establishes a new start point. The top-right **Session controls** button has **Finish session**. Keep the page visible while walking.
 
 The app does not automatically activate location on launch. Tracking is explicitly started and can be stopped. Reopening an interrupted session restores counts in a paused state.
 
-Older unfinished sessions with an empty prayer receive the Hanuman Chalisa; existing custom text is preserved. The original hymn by Tulsidas is public-domain text, checked against [Sanskrit Documents](https://sanskritdocuments.org/doc_z_otherlang_hindi/chaalisa.html). A bundled Noto Sans Devanagari font keeps the Hindi reading independent of runtime font downloads; its SIL Open Font License is included in `assets/fonts/OFL.txt`.
+Older unfinished sessions with an empty prayer receive the Hanuman Chalisa; existing custom text is preserved. The original hymn by Tulsidas is public-domain text, checked against [Sanskrit Documents](https://sanskritdocuments.org/doc_z_otherlang_hindi/chaalisa.html). The English meaning is an original rendering included with this app. A bundled Noto Sans Devanagari font keeps the Hindi reading independent of runtime font downloads; its SIL Open Font License is included in `assets/fonts/OFL.txt`.
 
 ## Detection and limitations
 
@@ -33,7 +37,11 @@ Android uses a user-started foreground location service with a visible notificat
 
 ## Data
 
-Counts, event timestamps, session names, prayers and completed-loop distance/duration are stored locally using `shared_preferences`, under `pradakshina.sessions.v1`. Raw coordinates are used only in memory; routes are not stored or uploaded. Firebase is used only for web hosting; no login or cloud database is required. History belongs to this device and browser origin, and is lost when app/browser data is cleared. Use one active browser tab. Preview and production URLs have separate storage. Writes are serialized and failures display a retry option. This is personal local history, not a backed-up record system.
+Counts, reading events, timestamps, session names, prayers, completed-loop distance/duration and accepted GPS coordinates are stored locally using `shared_preferences`, under `pradakshina.sessions.v1`. Existing history is migrated with empty reading/path lists; older routes cannot be reconstructed. Paths record only fixes accepted by the same accuracy/freshness/movement filter as loop detection. Pauses, manual lap corrections, gaps and jumps start disconnected segments. Route distance excludes connections across those segments; elapsed session time includes pauses. Completed GPS detections remain in history even after a manual count correction.
+
+Path snapshots are saved every five accepted fixes and on counts, pauses and finish; an abrupt browser/process exit can lose the last four unsaved points. A limit of 12,000 points across saved sessions bounds coordinate storage. At that limit counting continues and Paths displays a notice; **Remove saved path** frees coordinates while retaining counts/events. Storage failures are visible with a retry action. Clearing app/browser data removes history. Use one active tab. Preview and production URLs have separate storage. This is personal local history, not a backed-up record system.
+
+Firebase is used only for web hosting; no login or cloud database is required, and saved paths are not uploaded. **Show map** explicitly loads OpenStreetMap tiles, whose requests reveal the viewed area to the tile service. No map tiles are requested from the reading screen or Summary. The map uses flutter_map 8.2.2's browser/native HTTP caching, a native app user-agent, visible linked attribution, and no tile prefetch/offline-download feature. Maps need internet; saved counts and coordinates remain local. See the [OpenStreetMap tile policy](https://operations.osmfoundation.org/policies/tiles/) and [flutter_map caching documentation](https://docs.fleaflet.dev/layers/tile-layer/caching).
 
 ## Development
 
@@ -67,6 +75,8 @@ firebase deploy --only hosting --project pradakshina-counter
 ```
 
 ## Validation before production
+
+The expanded suite has 28 tests, including repeated top-to-bottom reading gestures, no counts on programmatic scroll/language changes, independent manual counters, translation preservation, old-session migration, persisted coordinate timestamps, disconnected paths, map loop selection and the timestamp slider. Widget map tests use synthetic coordinates and disable network tiles. A separate ignored local demo verifies real map tiles without adding synthetic paths to production history.
 
 Automated tests cover clockwise/anticlockwise circuits, stationary jitter, partial circuits, out-and-back paths, distance thresholds, bad/stale/duplicate fixes, jumps, signal gaps, permission denial, cancellation during permission requests, persistence/recovery, corrupt history and the narrow-phone manual workflow. Test the APK outdoors on an actual temple path against a manual count, including screen lock, permission revocation and battery-saving mode. Physical GPS and iOS builds cannot be validated by simulated tests alone.
 

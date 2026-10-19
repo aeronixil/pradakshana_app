@@ -13,7 +13,7 @@ class Lap {
   final int seconds;
 }
 
-/// Conservative outdoor loop detector. Coordinates never leave this object.
+/// Conservative outdoor loop detector. Accepted fixes can be saved locally.
 /// A loop must leave the start gate, enclose area, then return to the gate.
 class LapTracker {
   LapTracker({this.minimumDistance = 80});
@@ -23,9 +23,12 @@ class LapTracker {
   double distance = 0;
   double _twiceArea = 0;
   bool _departed = false;
+  bool acceptedFix = false, startsSegment = false;
   String status = 'Waiting for an accurate GPS fix…';
 
   void reset() {
+    acceptedFix = false;
+    startsSegment = true;
     _anchor = _previous = null;
     _lastTimestamp = null;
     distance = _twiceArea = 0;
@@ -49,6 +52,8 @@ class LapTracker {
   }
 
   Lap? add(GpsFix fix, {required DateTime now}) {
+    acceptedFix = false;
+    startsSegment = false;
     if (!fix.latitude.isFinite ||
         !fix.longitude.isFinite ||
         fix.latitude.abs() > 90 ||
@@ -69,12 +74,14 @@ class LapTracker {
     }
     _lastTimestamp = fix.time;
     if (_previous == null) {
+      acceptedFix = startsSegment = true;
       _begin(fix);
       status = 'Start point set. Walk a full loop and return here.';
       return null;
     }
     final seconds = fix.time.difference(_previous!.time).inMilliseconds / 1000;
     if (seconds > 20) {
+      acceptedFix = startsSegment = true;
       _begin(fix);
       status = 'GPS gap — partial loop discarded. New start point set.';
       return null;
@@ -89,6 +96,7 @@ class LapTracker {
     }
     // Avoid accumulating sub-metre stationary jitter.
     if (step < 2) return null;
+    acceptedFix = true;
     distance += step;
     _twiceArea += previous.x * p.y - p.x * previous.y;
     _previous = fix;

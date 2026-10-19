@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'hanuman_chalisa.dart';
 import 'prayer_reader.dart';
 import 'session_controller.dart';
+import 'insights.dart';
 
 void main() => runApp(const MyApp());
 
@@ -71,7 +72,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _finish() async {
     // Keep any custom reading available for the next session, too.
     prayer.text = counter.active?['prayer'] as String? ?? hanumanChalisa;
+    final session = counter.active;
     await counter.finish();
+    if (mounted) _insights(session);
+  }
+
+  void _insights([Map<String, dynamic>? session]) {
+    Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+            builder: (_) => Insights(controller: counter, session: session)));
   }
 
   @override
@@ -173,9 +183,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 children: [
                   Row(children: [
                     Expanded(
-                        child: Text('${counter.currentCount} pradakshinas',
-                            key: const Key('live-count'),
-                            style: Theme.of(context).textTheme.titleLarge)),
+                        child: Text('Read & walk',
+                            style: Theme.of(context).textTheme.titleMedium)),
                     FilledButton.icon(
                         onPressed: counter.busy
                             ? null
@@ -190,6 +199,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             : counter.tracking
                                 ? 'Pause'
                                 : 'Start GPS')),
+                  ]),
+                  Row(children: [
+                    Expanded(
+                        child: _counterControls(
+                      '${counter.currentCount} pradakshinas',
+                      'pradakshina',
+                      counter.currentCount,
+                      (delta) => counter.adjust(delta),
+                      key: const Key('live-count'),
+                    )),
+                    const SizedBox(width: 8),
+                    Expanded(
+                        child: _counterControls(
+                      '${counter.currentReadings} readings',
+                      'reading',
+                      counter.currentReadings,
+                      (delta) => counter.adjustReading(delta),
+                      key: const Key('reading-count'),
+                    )),
                   ]),
                   const SizedBox(height: 4),
                   Text(counter.status,
@@ -206,8 +234,36 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   key: ValueKey(counter.active!['startedAt']),
                   text: counter.active!['prayer'] as String,
                   onChanged: (text) => unawaited(counter.updatePrayer(text)),
+                  onRead: (language) => unawaited(counter.adjustReading(1,
+                      source: 'scroll', language: language)),
                 ))),
       ]);
+
+  Widget _counterControls(
+          String label, String kind, int value, ValueChanged<int> adjust,
+          {Key? key}) =>
+      DecoratedBox(
+        decoration: BoxDecoration(
+            color: Colors.white, borderRadius: BorderRadius.circular(12)),
+        child: Row(children: [
+          IconButton(
+              tooltip: 'Subtract $kind',
+              onPressed: value > 0 ? () => adjust(-1) : null,
+              icon: const Icon(Icons.remove),
+              visualDensity: VisualDensity.compact),
+          Expanded(
+              child: Text(label,
+                  key: key,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w600))),
+          IconButton(
+              tooltip: 'Add $kind',
+              onPressed: () => adjust(1),
+              icon: const Icon(Icons.add),
+              visualDensity: VisualDensity.compact),
+        ]),
+      );
 
   Widget _setupScreen() => ListView(
           controller: scroll,
@@ -287,7 +343,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   : 'Keep this page visible while reading. GPS pauses when the app is hidden. Screen-awake support depends on your browser.'),
               const SizedBox(height: 8),
               const Text(
-                  'Best outdoors on larger paths. Small indoor circuits need manual counting. Your history stays on this device; clearing app/browser data removes it. Routes are not saved or uploaded.'),
+                  'Best outdoors on larger paths. Small indoor circuits need manual counting. Counts and timestamped paths stay on this device; clearing app/browser data removes them. Open Insights for graphs and maps.'),
             ])),
             const SizedBox(height: 20),
             Text('Your practice · ${counter.total} total',
@@ -305,6 +361,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     subtitle: Text(
                         '${date(s['startedAt'] as String)} · ${s['endedAt'] == null ? 'In progress' : 'Finished'}'),
                     children: [
+                      TextButton.icon(
+                          onPressed: () => _insights(s),
+                          icon: const Icon(Icons.insights),
+                          label: const Text('View insights & path')),
                       if ((s['events'] as List).isEmpty)
                         const ListTile(
                             title: Text('No completed pradakshinas yet.')),
@@ -329,6 +389,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             title: const Text('Pradakshina'),
             backgroundColor: const Color(0xfffffaf3),
             actions: [
+              IconButton(
+                  onPressed: () => _insights(),
+                  tooltip: 'Insights',
+                  icon: const Icon(Icons.insights)),
               if (counter.active != null)
                 IconButton(
                     onPressed: _sessionControls,

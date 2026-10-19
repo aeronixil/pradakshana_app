@@ -52,6 +52,9 @@ void main() {
     expect(find.text('0 pradakshinas'), findsOneWidget);
     await tester.tap(find.text('Finish session'));
     await tester.pumpAndSettle();
+    expect(find.text('Insights'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
     expect(
         tester
             .widget<TextField>(find.byKey(const Key('prayer-input')))
