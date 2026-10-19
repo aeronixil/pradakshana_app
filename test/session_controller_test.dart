@@ -81,6 +81,25 @@ void main() {
     c.dispose();
     await source.fixes.close();
   });
+  test('reading edits persist without changing counts or stopping GPS',
+      () async {
+    final source = FakeLocation();
+    final c = SessionController(location: source);
+    await c.load();
+    await c.begin('Temple', 'Original', 80);
+    await c.adjust(1);
+    await c.startGps();
+    await c.updatePrayer('Edited prayer');
+    expect(c.tracking, true);
+    expect(c.currentCount, 1);
+    c.dispose();
+    final restored = SessionController();
+    await restored.load();
+    expect(restored.active!['prayer'], 'Edited prayer');
+    expect(restored.currentCount, 1);
+    restored.dispose();
+    await source.fixes.close();
+  });
   test('finishing during permission request does not start a late tracker',
       () async {
     final source = FakeLocation()..permission = Completer<void>();

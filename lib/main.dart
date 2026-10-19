@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'hanuman_chalisa.dart';
+import 'prayer_reader.dart';
 import 'session_controller.dart';
 
 void main() => runApp(const MyApp());
@@ -11,12 +13,12 @@ class MyApp extends StatelessWidget {
         title: 'Pradakshina',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
-          useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xffb85d28)),
-          scaffoldBackgroundColor: const Color(0xfffffaf3),
-          inputDecorationTheme:
-              const InputDecorationTheme(border: OutlineInputBorder()),
-        ),
+            useMaterial3: true,
+            colorScheme:
+                ColorScheme.fromSeed(seedColor: const Color(0xffb85d28)),
+            scaffoldBackgroundColor: const Color(0xfffffaf3),
+            inputDecorationTheme:
+                const InputDecorationTheme(border: OutlineInputBorder())),
         home: const HomeScreen(),
       );
 }
@@ -31,7 +33,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late final SessionController counter;
   final name = TextEditingController();
-  final prayer = TextEditingController();
+  final prayer = TextEditingController(text: hanumanChalisa);
   final scroll = ScrollController();
   double minimum = 80;
 
@@ -41,22 +43,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     counter = widget.controller ?? SessionController();
     WidgetsBinding.instance.addObserver(this);
     counter.addListener(_refresh);
-    unawaited(counter.load());
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    await counter.load();
+    // Supply the reading for an older, unfinished session with an empty prayer.
+    // Existing custom prayers are preserved.
+    if (mounted &&
+        counter.active != null &&
+        (counter.active!['prayer'] as String).trim().isEmpty) {
+      await counter.updatePrayer(hanumanChalisa);
+    }
   }
 
   void _refresh() {
     if (mounted) setState(() {});
   }
 
-  Future<void> _begin() async {
+  Future<void> _begin({bool gps = true}) async {
     FocusScope.of(context).unfocus();
-    await counter.begin(name.text, prayer.text, minimum);
-    if (mounted && scroll.hasClients) scroll.jumpTo(0);
+    await counter.begin(name.text,
+        prayer.text.trim().isEmpty ? hanumanChalisa : prayer.text, minimum);
+    if (mounted && gps) await counter.startGps();
   }
 
   Future<void> _finish() async {
+    // Keep any custom reading available for the next session, too.
+    prayer.text = counter.active?['prayer'] as String? ?? hanumanChalisa;
     await counter.finish();
-    if (mounted && scroll.hasClients) scroll.jumpTo(0);
   }
 
   @override
@@ -92,179 +107,200 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       color: Colors.white,
       child: Padding(padding: const EdgeInsets.all(20), child: child));
 
-  @override
-  Widget build(BuildContext context) {
-    final active = counter.active;
-    return Scaffold(
-      appBar: AppBar(
-          title: const Text('Pradakshina'),
-          backgroundColor: const Color(0xfffffaf3)),
-      body: SafeArea(
-          child: Center(
-              child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 760),
-        child: ListView(
-            controller: scroll,
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-            children: [
-              Text('Every circle, a moment of devotion.',
-                  style: Theme.of(context).textTheme.headlineSmall),
-              const SizedBox(height: 8),
-              const Text('Walk mindfully. Let GPS keep count.'),
-              const SizedBox(height: 20),
-              if (counter.storageError != null)
-                panel(Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(counter.storageError!,
-                          style: const TextStyle(color: Colors.red)),
-                      if (counter.ready)
+  Widget _storageNotice() => Padding(
+      padding: const EdgeInsets.all(8),
+      child: Row(children: [
+        Expanded(
+            child: Text(counter.storageError!,
+                style: const TextStyle(color: Colors.red))),
+        if (counter.ready)
+          TextButton(onPressed: counter.save, child: const Text('Retry save')),
+      ]));
+
+  void _sessionControls() {
+    showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (sheetContext) => SafeArea(
+                child: AnimatedBuilder(
+              animation: counter,
+              builder: (context, _) => SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text('Session controls',
+                            style: Theme.of(context).textTheme.titleLarge),
+                        const SizedBox(height: 8),
+                        Text(counter.active?['name'] as String? ?? ''),
+                        const SizedBox(height: 12),
+                        Text(counter.status),
+                        if (counter.tracking)
+                          Text(
+                              '${counter.tracker.distance.toStringAsFixed(0)} m this loop'
+                              '${counter.accuracy == null ? '' : ' · GPS ±${counter.accuracy!.toStringAsFixed(0)} m'}'),
+                        const SizedBox(height: 16),
+                        OutlinedButton.icon(
+                            onPressed: () => counter.adjust(1),
+                            icon: const Icon(Icons.add),
+                            label: const Text('Add manually')),
+                        OutlinedButton.icon(
+                            onPressed: counter.currentCount > 0
+                                ? () => counter.adjust(-1)
+                                : null,
+                            icon: const Icon(Icons.remove),
+                            label: const Text('Correct −1')),
+                        const SizedBox(height: 8),
+                        FilledButton(
+                            onPressed: () {
+                              Navigator.pop(sheetContext);
+                              unawaited(_finish());
+                            },
+                            child: const Text('Finish session')),
                         TextButton(
-                            onPressed: counter.save,
-                            child: const Text('Retry save')),
-                    ])),
-              if (!counter.ready && counter.storageError == null)
-                const LinearProgressIndicator(),
-              if (active == null)
-                panel(Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                            onPressed: () => Navigator.pop(sheetContext),
+                            child: const Text('Back to reading')),
+                      ])),
+            )));
+  }
+
+  Widget _readingScreen() => Column(children: [
+        Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(children: [
+                    Expanded(
+                        child: Text('${counter.currentCount} pradakshinas',
+                            key: const Key('live-count'),
+                            style: Theme.of(context).textTheme.titleLarge)),
+                    FilledButton.icon(
+                        onPressed: counter.busy
+                            ? null
+                            : counter.tracking
+                                ? () => counter.pause()
+                                : counter.startGps,
+                        icon: Icon(
+                            counter.tracking ? Icons.pause : Icons.my_location,
+                            size: 18),
+                        label: Text(counter.busy
+                            ? 'Connecting…'
+                            : counter.tracking
+                                ? 'Pause'
+                                : 'Start GPS')),
+                  ]),
+                  const SizedBox(height: 4),
+                  Text(counter.status,
+                      key: const Key('gps-status'),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall),
+                ])),
+        if (counter.storageError != null) _storageNotice(),
+        Expanded(
+            child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: PrayerReader(
+                  key: ValueKey(counter.active!['startedAt']),
+                  text: counter.active!['prayer'] as String,
+                  onChanged: (text) => unawaited(counter.updatePrayer(text)),
+                ))),
+      ]);
+
+  Widget _setupScreen() => ListView(
+          controller: scroll,
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+          children: [
+            Text('Read. Walk. Let GPS count.',
+                style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 8),
+            const Text(
+                'Hanuman Chalisa is ready below. You can edit it or paste another prayer.'),
+            const SizedBox(height: 12),
+            if (counter.storageError != null) _storageNotice(),
+            if (!counter.ready && counter.storageError == null)
+              const LinearProgressIndicator(),
+            FilledButton.icon(
+                onPressed: counter.ready ? () => _begin() : null,
+                icon: const Icon(Icons.menu_book),
+                label: const Text('Read & start GPS')),
+            TextButton(
+                onPressed: counter.ready ? () => _begin(gps: false) : null,
+                child: const Text('Read without GPS')),
+            const SizedBox(height: 8),
+            TextField(
+                key: const Key('prayer-input'),
+                controller: prayer,
+                minLines: 7,
+                maxLines: 10,
+                maxLength: 10000,
+                style: const TextStyle(
+                    fontFamily: 'NotoDevanagari', fontSize: 22, height: 1.6),
+                decoration: const InputDecoration(
+                    labelText: 'Hanuman Chalisa / your prayer',
+                    filled: true,
+                    fillColor: Colors.white,
+                    alignLabelWithHint: true,
+                    hintText: 'Write or paste in Hindi or English')),
+            Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                    onPressed: () => prayer.text = hanumanChalisa,
+                    child: const Text('Load Hanuman Chalisa'))),
+            Card(
+                elevation: 0,
+                color: Colors.white,
+                child: ExpansionTile(
+                    title: const Text('Place & loop settings'),
+                    childrenPadding: const EdgeInsets.all(16),
                     children: [
-                      Text('Begin your practice',
-                          style: Theme.of(context).textTheme.titleLarge),
-                      const SizedBox(height: 16),
                       TextField(
+                          key: const Key('place-input'),
                           controller: name,
                           maxLength: 100,
                           decoration: const InputDecoration(
                               labelText: 'Temple or place (optional)')),
                       const SizedBox(height: 12),
-                      TextField(
-                          controller: prayer,
-                          minLines: 3,
-                          maxLines: 6,
-                          maxLength: 10000,
-                          decoration: const InputDecoration(
-                              labelText: 'Prayer or mantra (optional)',
-                              hintText: 'Write or paste in Hindi or English')),
-                      const SizedBox(height: 12),
                       DropdownButtonFormField<double>(
-                        value: minimum,
-                        decoration: const InputDecoration(
-                            labelText: 'Minimum distance for one loop'),
-                        items: [60.0, 80.0, 150.0, 300.0, 500.0, 1000.0]
-                            .map((m) => DropdownMenuItem(
-                                value: m, child: Text('${m.toInt()} metres')))
-                            .toList(),
-                        onChanged: (v) => setState(() => minimum = v!),
-                      ),
-                      const SizedBox(height: 16),
-                      FilledButton.icon(
-                          onPressed: counter.ready ? _begin : null,
-                          icon: const Icon(Icons.self_improvement),
-                          label: const Text('Begin session')),
-                    ]))
-              else
-                panel(Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(active['name'] as String,
-                          style: Theme.of(context).textTheme.titleLarge),
-                      const SizedBox(height: 8),
-                      Center(
-                          child: Text('${counter.currentCount}',
-                              style: const TextStyle(
-                                  fontSize: 88,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xff9b491e)))),
-                      const Center(child: Text('pradakshinas this session')),
-                      const SizedBox(height: 20),
-                      Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(
-                                counter.tracking
-                                    ? Icons.gps_fixed
-                                    : Icons.gps_off,
-                                color: const Color(0xff9b491e)),
-                            const SizedBox(width: 10),
-                            Expanded(child: Text(counter.status)),
-                          ]),
-                      if (counter.tracking)
-                        Padding(
-                            padding: const EdgeInsets.only(top: 10),
-                            child: Text(
-                                '${counter.tracker.distance.toStringAsFixed(0)} m this loop'
-                                '${counter.accuracy == null ? '' : ' · GPS ±${counter.accuracy!.toStringAsFixed(0)} m'}')),
-                      const SizedBox(height: 16),
-                      FilledButton.icon(
-                          onPressed: counter.busy
-                              ? null
-                              : counter.tracking
-                                  ? () => counter.pause()
-                                  : counter.startGps,
-                          icon: Icon(counter.tracking
-                              ? Icons.pause
-                              : Icons.my_location),
-                          label: Text(counter.busy
-                              ? 'Connecting…'
-                              : counter.tracking
-                                  ? 'Pause GPS'
-                                  : 'Start GPS tracking')),
-                      const SizedBox(height: 8),
-                      Wrap(
-                          alignment: WrapAlignment.center,
-                          spacing: 12,
-                          runSpacing: 8,
-                          children: [
-                            OutlinedButton.icon(
-                                onPressed: () => counter.adjust(1),
-                                icon: const Icon(Icons.add),
-                                label: const Text('Add manually')),
-                            OutlinedButton.icon(
-                                onPressed: counter.currentCount > 0
-                                    ? () => counter.adjust(-1)
-                                    : null,
-                                icon: const Icon(Icons.remove),
-                                label: const Text('Correct −1')),
-                            TextButton(
-                                onPressed: _finish,
-                                child: const Text('Finish session')),
-                          ]),
-                      if ((active['prayer'] as String).isNotEmpty) ...[
-                        const Divider(height: 32),
-                        SelectableText(active['prayer'] as String,
-                            style: const TextStyle(fontSize: 22, height: 1.7)),
-                      ],
+                          value: minimum,
+                          decoration: const InputDecoration(
+                              labelText: 'Minimum distance for one loop'),
+                          items: [60.0, 80.0, 150.0, 300.0, 500.0, 1000.0]
+                              .map((m) => DropdownMenuItem(
+                                  value: m, child: Text('${m.toInt()} metres')))
+                              .toList(),
+                          onChanged: (v) => setState(() => minimum = v!)),
                     ])),
-              const SizedBox(height: 12),
-              panel(Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('How automatic counting works',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 8),
-                    const Text(
-                        'Start GPS on your walking path and wait for a start point. Walk a complete loop around the temple and return within 10 m of where you started. Each loop must take at least 30 seconds and move at least 25 m away from the start.'),
-                    const SizedBox(height: 8),
-                    Text(counter.canBackground
-                        ? 'Android shows a notification during tracking. Pause or finish to stop location use. Battery settings may interrupt GPS.'
-                        : 'Keep this page visible and your screen awake. Tracking pauses when the app is hidden; resume begins a new loop.'),
-                    const SizedBox(height: 8),
-                    const Text(
-                        'Best outdoors on larger paths. Small indoor circuits and weak GPS need manual counting. Counts and timestamps stay on this device; your route is not stored or uploaded. Clearing app/browser data removes history.'),
-                  ])),
-              const SizedBox(height: 20),
-              Text('Your practice · ${counter.total} total',
-                  style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 12),
+            panel(
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Automatic counting',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              if (counter.sessions.isEmpty)
-                const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Text('Your saved sessions will appear here.')),
-              ...counter.sessions.map((s) => Card(
-                  elevation: 0,
-                  color: Colors.white,
-                  child: ExpansionTile(
+              const Text(
+                  'Allow precise location and wait for a start point. Walk a full loop, at least 25 m away, and return within 10 m of your start. Each loop must take at least 30 seconds.'),
+              const SizedBox(height: 8),
+              Text(counter.canBackground
+                  ? 'Android shows a notification while GPS counts. Battery restrictions can interrupt it.'
+                  : 'Keep this page visible while reading. GPS pauses when the app is hidden. Screen-awake support depends on your browser.'),
+              const SizedBox(height: 8),
+              const Text(
+                  'Best outdoors on larger paths. Small indoor circuits need manual counting. Your history stays on this device; clearing app/browser data removes it. Routes are not saved or uploaded.'),
+            ])),
+            const SizedBox(height: 20),
+            Text('Your practice · ${counter.total} total',
+                style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            if (counter.sessions.isEmpty)
+              const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text('Your saved sessions will appear here.')),
+            ...counter.sessions.map((s) => Card(
+                elevation: 0,
+                color: Colors.white,
+                child: ExpansionTile(
                     title: Text('${s['name']} · ${counter.count(s)}'),
                     subtitle: Text(
                         '${date(s['startedAt'] as String)} · ${s['endedAt'] == null ? 'In progress' : 'Finished'}'),
@@ -284,10 +320,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             subtitle: Text(
                                 '${date(e['at'] as String)}${e['distance'] == null ? '' : ' · ${(e['distance'] as num).toStringAsFixed(0)} m · ${e['seconds']} sec'}'),
                           )),
-                    ],
-                  ))),
+                    ]))),
+          ]);
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(
+            title: const Text('Pradakshina'),
+            backgroundColor: const Color(0xfffffaf3),
+            actions: [
+              if (counter.active != null)
+                IconButton(
+                    onPressed: _sessionControls,
+                    tooltip: 'Session controls',
+                    icon: const Icon(Icons.tune))
             ]),
-      ))),
-    );
-  }
+        body: SafeArea(
+            child: Center(
+                child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: counter.active == null ? _setupScreen() : _readingScreen(),
+        ))),
+      );
 }

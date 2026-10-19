@@ -230,6 +230,13 @@ class SessionController extends ChangeNotifier {
     }
   }
 
+  Future<void> updatePrayer(String text) async {
+    if (active == null || active!['prayer'] == text) return;
+    active!['prayer'] = text;
+    _notify();
+    await save();
+  }
+
   Future<void> pause({String? message}) async {
     ++_generation;
     tracking = false;

@@ -8,12 +8,15 @@ The existing local checkout matches GitHub's original `main` commit `1c6137b`.
 
 ## Use
 
-1. Optionally enter the temple name and a prayer/mantra. Choose a minimum loop distance slightly below your actual route length (80 m by default).
-2. Begin a session, tap **Start GPS tracking**, and allow precise location. Wait for the start-point confirmation before walking.
+1. The full Hanuman Chalisa in Devanagari is prefilled in the large text box. Edit it or paste another prayer if desired. Temple name and minimum loop distance (80 m by default) are under **Place & loop settings**.
+2. Tap **Read & start GPS** and allow precise location. Wait for the start-point confirmation before walking. **Read without GPS** opens the same reader without requesting location.
 3. Complete a loop and return within 10 m of the start. The count, timestamp, measured distance and duration are saved automatically.
-4. Pause when taking a break; resume establishes a new start point. Finish saves the session in history. Manual +1 / −1 adjustments are recorded separately and reset any partial GPS loop to prevent counting it twice.
+4. The count and GPS status remain above the full-height scrolling reading box. Use the text-size buttons, or **Edit** / **Done** to change the text; edits save in the session and GPS updates preserve the reading position. The app requests a screen wake lock while reading, where supported.
+5. Pause when taking a break; resume establishes a new start point. The top-right **Session controls** button opens manual corrections and **Finish session**. Manual +1 / −1 adjustments are recorded separately and reset any partial GPS loop to prevent counting it twice.
 
 The app does not automatically activate location on launch. Tracking is explicitly started and can be stopped. Reopening an interrupted session restores counts in a paused state.
+
+Older unfinished sessions with an empty prayer receive the Hanuman Chalisa; existing custom text is preserved. The original hymn by Tulsidas is public-domain text, checked against [Sanskrit Documents](https://sanskritdocuments.org/doc_z_otherlang_hindi/chaalisa.html). A bundled Noto Sans Devanagari font keeps the Hindi reading independent of runtime font downloads; its SIL Open Font License is included in `assets/fonts/OFL.txt`.
 
 ## Detection and limitations
 
@@ -52,6 +55,8 @@ The debug APK is for device testing. The inherited Android release configuration
 ## Firebase Hosting
 
 `firebase.json` serves `build/web`, so deployment uses the current Flutter build instead of the old checked-in `public/` copy. The legacy folder is retained for reference and is not deployed.
+
+The bootstrap is inlined into HTML, the JavaScript entrypoint uses Flutter's build fingerprint, and hosting assets must revalidate. This prevents a cached copy of the old counter from hiding an update after refresh.
 
 ```sh
 firebase login
