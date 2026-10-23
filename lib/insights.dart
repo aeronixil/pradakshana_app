@@ -27,9 +27,11 @@ LatLng coordinate(dynamic point) =>
     LatLng((point['lat'] as num).toDouble(), (point['lng'] as num).toDouble());
 
 class Insights extends StatefulWidget {
-  const Insights({super.key, required this.controller, this.session});
+  const Insights(
+      {super.key, required this.controller, this.session, this.onUsePlace});
   final SessionController controller;
   final Map<String, dynamic>? session;
+  final ValueChanged<Map<String, dynamic>>? onUsePlace;
   @override
   State<Insights> createState() => _InsightsState();
 }
@@ -132,6 +134,11 @@ class _InsightsState extends State<Insights> {
     return ListView(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
         children: [
+          if (widget.onUsePlace != null && c.placeForSession(s) != null)
+            OutlinedButton.icon(
+                onPressed: () => widget.onUsePlace!(c.placeForSession(s)!),
+                icon: const Icon(Icons.location_on_outlined),
+                label: const Text('Use this place again')),
           Wrap(spacing: 8, runSpacing: 8, children: [
             _metric('${c.count(s)}', 'Pradakshinas'),
             _metric('${c.readings(s)}', 'Readings'),
@@ -315,6 +322,7 @@ class _SessionPathsState extends State<SessionPaths> {
   @override
   Widget build(BuildContext context) {
     final route = widget.session['route'] as List? ?? [];
+    final savedPlace = widget.controller.placeForSession(widget.session);
     final laps = (widget.session['events'] as List)
         .where((e) => e['source'] == 'gps' && e['startedAt'] != null)
         .toList();
@@ -338,6 +346,14 @@ class _SessionPathsState extends State<SessionPaths> {
     return ListView(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
         children: [
+          if (savedPlace != null)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.flag_outlined),
+              title: Text('${savedPlace['name']} · saved GPS start'),
+              subtitle: Text(
+                  '${(savedPlace['lat'] as num).toStringAsFixed(6)}, ${(savedPlace['lng'] as num).toStringAsFixed(6)}'),
+            ),
           if (widget.session['routeFull'] == true)
             const Card(
                 child: Padding(
@@ -428,6 +444,16 @@ class _SessionPathsState extends State<SessionPaths> {
                                             : Colors.deepOrange))
                                     .toList()),
                             MarkerLayer(markers: [
+                              if (savedPlace != null)
+                                Marker(
+                                    point: coordinate(savedPlace),
+                                    width: 32,
+                                    height: 32,
+                                    child: Tooltip(
+                                        message:
+                                            'Saved start · ${savedPlace['name']}',
+                                        child: const Icon(Icons.flag,
+                                            color: Colors.indigo, size: 28))),
                               Marker(
                                   point: coordinate(points.first),
                                   width: 32,

@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pradakshana_app/main.dart';
 import 'package:pradakshana_app/hanuman_chalisa.dart';
-import 'package:pradakshana_app/hanuman_chalisa_english.dart';
+import 'package:pradakshana_app/hanuman_chalisa_roman.dart';
 import 'package:pradakshana_app/insights.dart';
 import 'package:pradakshana_app/session_controller.dart';
 import 'lap_tracker_test.dart' as fixtures;
@@ -18,14 +18,15 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
   }
 
-  testWidgets(
-      'visible counter corrections and translation preserve original text',
+  testWidgets('counter corrections and script toggle preserve original prayer',
       (tester) async {
     phone(tester);
     final c = SessionController();
     await tester.pumpWidget(MaterialApp(home: HomeScreen(controller: c)));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Read without GPS'));
+    await tester.tap(find.text('Just read'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Session controls'));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Add pradakshina'));
     await tester.tap(find.byTooltip('Add reading'));
@@ -37,13 +38,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(c.currentCount, 0);
     expect(c.currentReadings, 0);
+    await tester.tap(find.text('Back to prayer'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byType(DropdownButton<bool>));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('English meaning').last);
+    await tester.tap(find.text('हिंदी').last);
     await tester.pumpAndSettle();
     final field =
         tester.widget<TextField>(find.byKey(const Key('prayer-reader')));
-    expect(field.controller!.text, hanumanChalisaEnglish);
+    expect(field.controller!.text, hanumanChalisa);
     field.scrollController!
         .jumpTo(field.scrollController!.position.maxScrollExtent);
     await tester.pumpAndSettle();
@@ -51,14 +54,14 @@ void main() {
     expect(c.active!['prayer'], hanumanChalisa);
     await tester.tap(find.byType(DropdownButton<bool>));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('हिंदी').last);
+    await tester.tap(find.text('English letters').last);
     await tester.pumpAndSettle();
     expect(
         tester
             .widget<TextField>(find.byKey(const Key('prayer-reader')))
             .controller!
             .text,
-        hanumanChalisa);
+        hanumanChalisaRoman);
     expect(c.currentReadings, 0);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
@@ -71,8 +74,7 @@ void main() {
     final c = SessionController();
     await tester.pumpWidget(MaterialApp(home: HomeScreen(controller: c)));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Read without GPS'));
-    await tester.pumpAndSettle();
+    expect(c.active, isNull);
     final reader = find.byKey(const Key('prayer-reader'));
     for (var repetition = 1; repetition <= 2; repetition++) {
       final scroll = tester.widget<TextField>(reader).scrollController!;

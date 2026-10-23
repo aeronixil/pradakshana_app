@@ -16,18 +16,26 @@ class Lap {
 /// Conservative outdoor loop detector. Accepted fixes can be saved locally.
 /// A loop must leave the start gate, enclose area, then return to the gate.
 class LapTracker {
-  LapTracker({this.minimumDistance = 80});
+  LapTracker(
+      {this.minimumDistance = 80, this.startLatitude, this.startLongitude})
+      : assert((startLatitude == null) == (startLongitude == null));
   final double minimumDistance;
+  final double? startLatitude, startLongitude;
+  static const startGateMetres = 15.0;
   GpsFix? _anchor, _previous;
   DateTime? _lastTimestamp;
   double distance = 0;
   double _twiceArea = 0;
   bool _departed = false;
   bool acceptedFix = false, startsSegment = false;
+  // A trustworthy current position can mark a new place even while waiting
+  // outside a saved start gate. It is not necessarily a recorded route point.
+  bool usableFix = false;
+  bool get armed => _anchor != null;
   String status = 'Waiting for an accurate GPS fix…';
 
   void reset() {
-    acceptedFix = false;
+    acceptedFix = usableFix = false;
     startsSegment = true;
     _anchor = _previous = null;
     _lastTimestamp = null;
@@ -51,8 +59,29 @@ class LapTracker {
     );
   }
 
+  static double distanceBetween(
+      double lat1, double lng1, double lat2, double lng2) {
+    const radius = 6371000.0;
+    final dLat = (lat2 - lat1) * math.pi / 180;
+    final dLng = (lng2 - lng1) * math.pi / 180;
+    final a = math.pow(math.sin(dLat / 2), 2) +
+        math.cos(lat1 * math.pi / 180) *
+            math.cos(lat2 * math.pi / 180) *
+            math.pow(math.sin(dLng / 2), 2);
+    return 2 * radius * math.asin(math.sqrt(a.clamp(0, 1)));
+  }
+
+  bool _atSavedStart(GpsFix fix) {
+    if (startLatitude == null) return true;
+    final metres = distanceBetween(
+        startLatitude!, startLongitude!, fix.latitude, fix.longitude);
+    if (metres <= startGateMetres) return true;
+    status = 'Go to your saved start · ${metres.round()} m away.';
+    return false;
+  }
+
   Lap? add(GpsFix fix, {required DateTime now}) {
-    acceptedFix = false;
+    acceptedFix = usableFix = false;
     startsSegment = false;
     if (!fix.latitude.isFinite ||
         !fix.longitude.isFinite ||
@@ -73,7 +102,9 @@ class LapTracker {
       return null;
     }
     _lastTimestamp = fix.time;
+    usableFix = true;
     if (_previous == null) {
+      if (!_atSavedStart(fix)) return null;
       acceptedFix = startsSegment = true;
       _begin(fix);
       status = 'Start point set. Walk a full loop and return here.';
@@ -81,6 +112,10 @@ class LapTracker {
     }
     final seconds = fix.time.difference(_previous!.time).inMilliseconds / 1000;
     if (seconds > 20) {
+      _anchor = _previous = null;
+      distance = _twiceArea = 0;
+      _departed = false;
+      if (!_atSavedStart(fix)) return null;
       acceptedFix = startsSegment = true;
       _begin(fix);
       status = 'GPS gap — partial loop discarded. New start point set.';

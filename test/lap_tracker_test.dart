@@ -86,4 +86,29 @@ void main() {
     tracker.reset();
     expect(run(tracker, circle(offset: 300)), hasLength(1));
   });
+  test('saved gate rejects distant starts and rearms only near the marker', () {
+    final tracker = LapTracker(startLatitude: 12, startLongitude: 77);
+    tracker.add(point(100, 0, 0), now: epoch);
+    expect(tracker.armed, false);
+    expect(tracker.acceptedFix, false);
+    expect(tracker.usableFix, true);
+    expect(run(tracker, circle(offset: 3)), hasLength(1));
+    tracker.reset();
+    tracker.add(point(40, 0, 300),
+        now: epoch.add(const Duration(seconds: 300)));
+    expect(tracker.armed, false);
+    expect(tracker.distance, 0);
+    expect(run(tracker, circle(offset: 303)), hasLength(1));
+  });
+  test('a signal gap away from saved start cannot create a new loop anchor',
+      () {
+    final tracker = LapTracker(startLatitude: 12, startLongitude: 77);
+    run(tracker, circle().take(20));
+    tracker.add(point(0, 60, 100),
+        now: epoch.add(const Duration(seconds: 100)));
+    expect(tracker.armed, false);
+    expect(tracker.acceptedFix, false);
+    expect(tracker.distance, 0);
+    expect(tracker.status, contains('saved start'));
+  });
 }

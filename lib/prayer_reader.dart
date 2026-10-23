@@ -3,31 +3,92 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'hanuman_chalisa.dart';
-import 'hanuman_chalisa_english.dart';
+import 'hanuman_chalisa_roman.dart';
 import 'reading_tracker.dart';
 
 /// Keeps its text controller and scroll position when GPS updates rebuild home.
 class PrayerReader extends StatefulWidget {
-  const PrayerReader(
-      {super.key, required this.text, required this.onChanged, this.onRead});
+  const PrayerReader({
+    super.key,
+    required this.text,
+    required this.onChanged,
+    this.onRead,
+    this.initialRoman = true,
+    this.initialFontSize = 24,
+    this.onPreferencesChanged,
+  });
   final String text;
   final ValueChanged<String> onChanged;
   final ValueChanged<String>? onRead;
+  final bool initialRoman;
+  final double initialFontSize;
+  final void Function(bool roman, double fontSize)? onPreferencesChanged;
   @override
   State<PrayerReader> createState() => _PrayerReaderState();
 }
 
+enum _ReadingOption { larger, smaller, edit, restore }
+
 class _PrayerReaderState extends State<PrayerReader>
     with WidgetsBindingObserver {
-  late final TextEditingController text =
-      TextEditingController(text: widget.text);
+  late final TextEditingController text = TextEditingController(
+      text: _usingRoman ? hanumanChalisaRoman : widget.text);
   final scroll = ScrollController();
   final focus = FocusNode();
-  double fontSize = 24;
+  late double fontSize = widget.initialFontSize.isFinite
+      ? widget.initialFontSize.clamp(18.0, 36.0)
+      : 24;
   bool editing = false;
   bool awakeFailed = false;
-  bool english = false, userScrolling = false, completed = false;
+  late bool roman = widget.initialRoman;
+  bool userScrolling = false, completed = false;
   final reading = ReadingTracker();
+  bool get _builtIn => widget.text == hanumanChalisa;
+  bool get _usingRoman => roman && _builtIn && !editing;
+
+  void _savePreferences() => widget.onPreferencesChanged?.call(roman, fontSize);
+
+  void _setRoman(bool value) {
+    focus.unfocus();
+    setState(() {
+      roman = value;
+      _resetReading();
+      text.text = _usingRoman ? hanumanChalisaRoman : widget.text;
+    });
+    if (scroll.hasClients) scroll.jumpTo(0);
+    _savePreferences();
+  }
+
+  void _setEditing(bool value) {
+    focus.unfocus();
+    setState(() {
+      editing = value;
+      _resetReading();
+      // Edit the saved source, never silently replace it with the display script.
+      text.text = _usingRoman ? hanumanChalisaRoman : widget.text;
+    });
+    if (scroll.hasClients) scroll.jumpTo(0);
+  }
+
+  void _selectOption(_ReadingOption option) {
+    switch (option) {
+      case _ReadingOption.larger:
+      case _ReadingOption.smaller:
+        setState(() {
+          fontSize = (fontSize + (option == _ReadingOption.larger ? 2 : -2))
+              .clamp(18.0, 36.0);
+          _resetReading();
+        });
+        _savePreferences();
+      case _ReadingOption.edit:
+        _setEditing(true);
+      case _ReadingOption.restore:
+        _resetReading();
+        widget.onChanged(hanumanChalisa);
+        focus.unfocus();
+        if (scroll.hasClients) scroll.jumpTo(0);
+    }
+  }
 
   void _resetReading() {
     reading.reset();
@@ -47,8 +108,8 @@ class _PrayerReaderState extends State<PrayerReader>
     }
     if (event is ScrollUpdateNotification && userScrolling) {
       if (reading.update(fraction)) {
-        widget.onRead?.call(english
-            ? 'English meaning'
+        widget.onRead?.call(_usingRoman
+            ? 'English letters'
             : widget.text == hanumanChalisa
                 ? 'Hindi'
                 : 'Custom prayer');
@@ -85,8 +146,9 @@ class _PrayerReaderState extends State<PrayerReader>
   @override
   void didUpdateWidget(PrayerReader oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!english && widget.text != text.text) {
-      text.text = widget.text;
+    if (widget.text != oldWidget.text) {
+      final displayed = _usingRoman ? hanumanChalisaRoman : widget.text;
+      if (text.text != displayed) text.text = displayed;
       _resetReading();
     }
   }
@@ -104,72 +166,54 @@ class _PrayerReaderState extends State<PrayerReader>
   @override
   Widget build(BuildContext context) => Column(children: [
         Row(children: [
-          Expanded(
-              child: DropdownButtonHideUnderline(
-                  child: DropdownButton<bool>(
-            value: english,
-            isExpanded: true,
-            items: [
-              DropdownMenuItem(
-                  value: false,
-                  child: Text(
-                      widget.text == hanumanChalisa ? 'हिंदी' : 'Your text')),
-              const DropdownMenuItem(
-                  value: true, child: Text('English meaning')),
+          if (_builtIn && !editing)
+            Expanded(
+                child: DropdownButtonHideUnderline(
+                    child: DropdownButton<bool>(
+              key: const Key('reading-script'),
+              value: roman,
+              isExpanded: true,
+              items: const [
+                DropdownMenuItem(value: false, child: Text('हिंदी')),
+                DropdownMenuItem(value: true, child: Text('English letters')),
+              ],
+              onChanged: (value) {
+                if (value != null && value != roman) _setRoman(value);
+              },
+            )))
+          else
+            Expanded(child: Text(_builtIn ? 'हिंदी · Edit' : 'Your text')),
+          if (editing)
+            TextButton.icon(
+                onPressed: () => _setEditing(false),
+                icon: const Icon(Icons.check),
+                label: const Text('Done')),
+          PopupMenuButton<_ReadingOption>(
+            tooltip: 'Reading options',
+            icon: const Icon(Icons.text_fields),
+            onSelected: _selectOption,
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                  value: _ReadingOption.larger,
+                  enabled: fontSize < 36,
+                  child: const Text('Larger text')),
+              PopupMenuItem(
+                  value: _ReadingOption.smaller,
+                  enabled: fontSize > 18,
+                  child: const Text('Smaller text')),
+              if (!editing)
+                PopupMenuItem(
+                    value: _ReadingOption.edit,
+                    child: Text(_usingRoman
+                        ? 'Edit original Hindi text'
+                        : 'Edit text')),
+              if (!_builtIn)
+                const PopupMenuItem(
+                    value: _ReadingOption.restore,
+                    child: Text('Load Hanuman Chalisa')),
             ],
-            onChanged: (value) {
-              focus.unfocus();
-              setState(() {
-                english = value!;
-                editing = false;
-                _resetReading();
-                text.text = english ? hanumanChalisaEnglish : widget.text;
-              });
-              if (scroll.hasClients) scroll.jumpTo(0);
-            },
-          ))),
-          IconButton(
-              tooltip: 'Smaller text',
-              onPressed: fontSize > 18
-                  ? () => setState(() {
-                        fontSize -= 2;
-                        _resetReading();
-                      })
-                  : null,
-              icon: const Icon(Icons.text_decrease)),
-          IconButton(
-              tooltip: 'Larger text',
-              onPressed: fontSize < 36
-                  ? () => setState(() {
-                        fontSize += 2;
-                        _resetReading();
-                      })
-                  : null,
-              icon: const Icon(Icons.text_increase)),
-          TextButton.icon(
-              onPressed: english
-                  ? null
-                  : () {
-                      focus.unfocus();
-                      setState(() {
-                        editing = !editing;
-                        _resetReading();
-                      });
-                    },
-              icon: Icon(editing ? Icons.check : Icons.edit_outlined),
-              label: Text(editing ? 'Done' : 'Edit')),
+          ),
         ]),
-        if (editing)
-          Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                  onPressed: () {
-                    text.text = hanumanChalisa;
-                    widget.onChanged(text.text);
-                    focus.unfocus();
-                    if (scroll.hasClients) scroll.jumpTo(0);
-                  },
-                  child: const Text('Load Hanuman Chalisa'))),
         Expanded(
             child: NotificationListener<ScrollNotification>(
                 onNotification: _onScroll,

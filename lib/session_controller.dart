@@ -63,6 +63,7 @@ class SessionController extends ChangeNotifier {
       : location = location ?? DeviceLocation(),
         now = now ?? DateTime.now;
   static const storageKey = 'pradakshina.sessions.v1';
+  static const readingPreferencesKey = 'pradakshina.reading-preferences.v1';
   final LocationSource location;
   final DateTime Function() now;
   SharedPreferences? _preferences;
@@ -79,6 +80,9 @@ class SessionController extends ChangeNotifier {
   String status = 'Start a session to count your pradakshinas.';
   String? storageError;
   double? accuracy;
+  GpsFix? _latestFix;
+  bool preferredRoman = true;
+  double preferredFontSize = 24;
   Future<void> _writes = Future.value();
 
   int count(Map<String, dynamic> session) => (session['events'] as List)
@@ -93,6 +97,121 @@ class SessionController extends ChangeNotifier {
   bool get canBackground =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
+  Map<String, dynamic>? placeForSession(Map<String, dynamic> session) {
+    final stored = session['place'];
+    final route = session['route'] as List? ?? [];
+    Map<String, dynamic>? place;
+    if (stored is Map) {
+      place = Map<String, dynamic>.from(stored);
+    } else if (route.isNotEmpty) {
+      final first = route.first;
+      place = {
+        'id': 'history:${(first['lat'] as num).toStringAsFixed(5)}:'
+            '${(first['lng'] as num).toStringAsFixed(5)}',
+        'name': session['name'],
+        'lat': first['lat'],
+        'lng': first['lng'],
+        'markedAt': first['at'],
+      };
+    }
+    if (place == null) return null;
+    return {
+      ...place,
+      'minimumDistance': session['minimumDistance'],
+      'prayer': session['prayer'],
+    };
+  }
+
+  List<Map<String, dynamic>> get places {
+    final found = <String>{};
+    return [
+      for (final session in sessions)
+        if (placeForSession(session) case final place?)
+          if (found.add(place['id'] as String)) place,
+    ];
+  }
+
+  Map<String, dynamic>? get latestPlace => places.firstOrNull;
+
+  bool get canMarkCurrentPlace {
+    final fix = _latestFix;
+    if (!tracking || active == null || fix == null) return false;
+    final age = now().difference(fix.time).inMilliseconds;
+    return age >= -2000 && age <= 10000;
+  }
+
+  static Map<String, dynamic> _marker(Map<String, dynamic> place) {
+    if (place['id'] is! String ||
+        (place['id'] as String).isEmpty ||
+        place['name'] is! String ||
+        place['lat'] is! num ||
+        place['lng'] is! num ||
+        !(place['lat'] as num).isFinite ||
+        !(place['lng'] as num).isFinite ||
+        (place['lat'] as num).abs() > 90 ||
+        (place['lng'] as num).abs() > 180) {
+      throw const FormatException('Invalid saved place');
+    }
+    DateTime.parse(place['markedAt'] as String);
+    return {
+      for (final key in ['id', 'name', 'lat', 'lng', 'markedAt'])
+        key: place[key],
+    };
+  }
+
+  LapTracker _newTracker() {
+    final place = active!['place'] as Map?;
+    return LapTracker(
+      minimumDistance: (active!['minimumDistance'] as num).toDouble(),
+      startLatitude: (place?['lat'] as num?)?.toDouble(),
+      startLongitude: (place?['lng'] as num?)?.toDouble(),
+    );
+  }
+
+  void _storePlace(GpsFix fix) {
+    active!['place'] = {
+      'id':
+          'mark:${now().microsecondsSinceEpoch}:${fix.latitude}:${fix.longitude}',
+      'name': active!['name'],
+      'lat': fix.latitude,
+      'lng': fix.longitude,
+      'markedAt': fix.time.toIso8601String(),
+    };
+  }
+
+  Future<bool> markCurrentPlace() async {
+    if (!canMarkCurrentPlace) return false;
+    _storePlace(_latestFix!);
+    tracker = _newTracker();
+    tracker.add(_latestFix!, now: now());
+    _recordPoint(_latestFix!);
+    status = 'Start marked and saved. Walk a full loop and return here.';
+    _notify();
+    await save();
+    return true;
+  }
+
+  Future<void> renameCurrentPlace(String name) async {
+    final trimmed = name.trim();
+    if (active == null || trimmed.isEmpty) return;
+    active!['name'] = trimmed;
+    if (active!['place'] is Map) {
+      active!['place'] = {...active!['place'] as Map, 'name': trimmed};
+    }
+    _notify();
+    await save();
+  }
+
+  Future<void> updateReadingPreferences({bool? roman, double? fontSize}) async {
+    if (!ready) return;
+    if (roman != null) preferredRoman = roman;
+    if (fontSize != null && fontSize.isFinite) {
+      preferredFontSize = fontSize.clamp(18, 36).toDouble();
+    }
+    _notify();
+    await save();
+  }
+
   void _notify() {
     if (!_disposed) notifyListeners();
   }
@@ -100,6 +219,21 @@ class SessionController extends ChangeNotifier {
   Future<void> load() async {
     try {
       _preferences = await SharedPreferences.getInstance();
+      try {
+        final raw = _preferences!.getString(readingPreferencesKey);
+        if (raw != null) {
+          final preferences = jsonDecode(raw) as Map;
+          if (preferences['roman'] is bool) {
+            preferredRoman = preferences['roman'] as bool;
+          }
+          final size = preferences['fontSize'];
+          if (size is num && size.isFinite) {
+            preferredFontSize = size.clamp(18, 36).toDouble();
+          }
+        }
+      } catch (_) {
+        // A broken display preference must not hide a user's saved history.
+      }
       final raw = _preferences!.getString(storageKey);
       if (raw != null) {
         final decoded = jsonDecode(raw) as List;
@@ -145,6 +279,8 @@ class SessionController extends ChangeNotifier {
             }
             DateTime.parse(p['at'] as String);
           }
+          final place = placeForSession(s);
+          if (place != null) s['place'] = _marker(place);
         }
         sessions = loaded;
         for (final s in sessions) {
@@ -165,9 +301,17 @@ class SessionController extends ChangeNotifier {
 
   Future<void> save() {
     final snapshot = jsonEncode(sessions);
+    final preferences = jsonEncode({
+      'roman': preferredRoman,
+      'fontSize': preferredFontSize,
+    });
     _writes = _writes.then((_) async {
       try {
         if (!await _preferences!.setString(storageKey, snapshot)) {
+          throw StateError('Write failed');
+        }
+        if (!await _preferences!
+            .setString(readingPreferencesKey, preferences)) {
           throw StateError('Write failed');
         }
         storageError = null;
@@ -180,7 +324,8 @@ class SessionController extends ChangeNotifier {
     return _writes;
   }
 
-  Future<void> begin(String name, String prayer, double minimum) async {
+  Future<void> begin(String name, String prayer, double minimum,
+      {Map<String, dynamic>? place}) async {
     if (!ready || active != null) return;
     active = {
       'startedAt': now().toIso8601String(),
@@ -191,6 +336,7 @@ class SessionController extends ChangeNotifier {
       'events': <Map<String, dynamic>>[],
       'readingEvents': <Map<String, dynamic>>[],
       'route': <Map<String, dynamic>>[],
+      if (place != null) 'place': _marker(place),
     };
     sessions.insert(0, active!);
     status = 'Session ready. Start GPS or use the manual counter.';
@@ -207,8 +353,8 @@ class SessionController extends ChangeNotifier {
     try {
       await location.prepare();
       if (_disposed || generation != _generation || active == null) return;
-      tracker = LapTracker(
-          minimumDistance: (active!['minimumDistance'] as num).toDouble());
+      tracker = _newTracker();
+      _latestFix = null;
       accuracy = null;
       final route = active!['route'] as List;
       _segment = route.isEmpty ? 0 : (route.last['segment'] as int) + 1;
@@ -220,6 +366,13 @@ class SessionController extends ChangeNotifier {
         _lastReceived = DateTime.now();
         accuracy = fix.accuracy;
         final lap = tracker.add(fix, now: now());
+        if (tracker.usableFix) _latestFix = fix;
+        if (tracker.acceptedFix && active!['place'] == null) {
+          _storePlace(fix);
+          tracker = _newTracker();
+          tracker.add(fix, now: now());
+          unawaited(save());
+        }
         status = tracker.status;
         if (tracker.acceptedFix) _recordPoint(fix);
         if (lap != null) {
@@ -315,6 +468,8 @@ class SessionController extends ChangeNotifier {
   }
 
   Future<void> clearRoute(Map<String, dynamic> session) async {
+    final place = placeForSession(session);
+    if (place != null) session['place'] = _marker(place);
     session['route'] = <dynamic>[];
     session.remove('routeFull');
     _segment++;
@@ -330,6 +485,7 @@ class SessionController extends ChangeNotifier {
     final subscription = _subscription;
     _subscription = null;
     tracker.reset();
+    _latestFix = null;
     status = message ??
         'Paused. Completed counts are saved; resume starts a fresh loop.';
     _notify();
@@ -347,7 +503,7 @@ class SessionController extends ChangeNotifier {
     (active!['events'] as List).add(
         {'at': now().toIso8601String(), 'delta': delta, 'source': 'manual'});
     status = tracking
-        ? 'Count adjusted. GPS will set a new start point.'
+        ? 'Count adjusted. Return to your saved start for the next loop.'
         : 'Manual count saved.';
     _notify();
     await save();
