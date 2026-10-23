@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +9,17 @@ import 'package:pradakshana_app/main.dart';
 import 'package:pradakshana_app/session_controller.dart';
 import 'lap_tracker_test.dart' as fixtures;
 import 'session_controller_test.dart' show FakeLocation;
+
+class DelayedBeginController extends SessionController {
+  final releaseBegin = Completer<void>();
+
+  @override
+  Future<void> begin(String name, String prayer, double minimum,
+      {Map<String, dynamic>? place}) async {
+    await super.begin(name, prayer, minimum, place: place);
+    await releaseBegin.future;
+  }
+}
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
@@ -98,6 +110,42 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     await source.fixes.close();
+  });
+
+  testWidgets(
+      'editing while session starts keeps newer text and keyboard focus',
+      (tester) async {
+    phone(tester);
+    final counter = DelayedBeginController();
+    await tester.pumpWidget(MaterialApp(home: HomeScreen(controller: counter)));
+    await tester.pumpAndSettle();
+    final reader = find.byKey(const Key('prayer-reader'));
+    await tester.tap(find.byTooltip('Reading options'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit original Hindi text'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(reader, 'Jai Hanuman');
+    await tester.pumpAndSettle();
+    expect(counter.active!['prayer'], 'Jai Hanuman');
+    expect(tester.widget<TextField>(reader).focusNode!.hasFocus, true);
+
+    // Send another keyboard edit without refocusing while begin is still pending.
+    tester.testTextInput.enterText('Jai Hanuman gyan gun sagar');
+    await tester.pumpAndSettle();
+    expect(counter.active!['prayer'], 'Jai Hanuman gyan gun sagar');
+    counter.releaseBegin.complete();
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(reader).controller!.text,
+        'Jai Hanuman gyan gun sagar');
+    expect(counter.active!['prayer'], 'Jai Hanuman gyan gun sagar');
+    expect(tester.widget<TextField>(reader).focusNode!.hasFocus, true);
+    await counter.save();
+    final saved = jsonDecode((await SharedPreferences.getInstance())
+        .getString(SessionController.storageKey)!);
+    expect(saved[0]['prayer'], 'Jai Hanuman gyan gun sagar');
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets(

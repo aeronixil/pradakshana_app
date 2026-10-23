@@ -77,10 +77,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (oldPrayer != null && oldPrayer.trim().isNotEmpty) prayer = oldPrayer;
   }
 
-  Future<void> _begin({bool gps = true}) async {
+  Future<void> _begin({bool gps = true, bool unfocus = true}) async {
     if (starting || !counter.ready) return;
     setState(() => starting = true);
-    FocusScope.of(context).unfocus();
+    if (unfocus) FocusScope.of(context).unfocus();
     try {
       if (counter.active == null) {
         await counter.begin(placeName, prayer, minimum, place: selectedPlace);
@@ -346,7 +346,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final active = counter.active;
-    final place = active?['place'] as Map? ?? selectedPlace;
+    final place = active != null ? active['place'] as Map? : selectedPlace;
     return Scaffold(
         appBar: AppBar(
             title: const Text('Pradakshina'),
@@ -476,9 +476,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                         setState(() => prayer = text);
                                         unawaited(() async {
                                           if (counter.active == null) {
-                                            await _begin(gps: false);
+                                            await _begin(
+                                                gps: false, unfocus: false);
                                           }
-                                          await counter.updatePrayer(text);
+                                          if (prayer == text) {
+                                            await counter.updatePrayer(text);
+                                          }
                                         }());
                                       },
                                       onRead: counter.ready

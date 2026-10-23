@@ -519,7 +519,7 @@ class _SessionPathsState extends State<SessionPaths> {
                       builder: (context) => AlertDialog(
                             title: const Text('Remove this saved path?'),
                             content: const Text(
-                                'Counts, readings and timestamps will remain. The coordinates cannot be recovered.'),
+                                'The saved start, counts, readings and timestamps will remain. Recorded path points will be removed.'),
                             actions: [
                               TextButton(
                                   onPressed: () =>
