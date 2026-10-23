@@ -1,11 +1,11 @@
 {
-    "name": "pradakshana_app",
-    "short_name": "pradakshana_app",
+    "name": "Pradakshina",
+    "short_name": "Pradakshina",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#FFFAF3",
+    "theme_color": "#B85D28",
+    "description": "GPS pradakshina counter and private practice history.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
